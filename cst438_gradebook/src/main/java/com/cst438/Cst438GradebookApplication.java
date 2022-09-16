@@ -36,5 +36,5 @@ public class Cst438GradebookApplication  {
 	public RegistrationService registrationServiceDefault() {
 		return new RegistrationService();
 	}
-
+	
 }
