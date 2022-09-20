@@ -1,22 +1,26 @@
 package com.cst438.controllers;
 
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.List;
-
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.cst438.domain.Assignment;
 import com.cst438.domain.AssignmentListDTO;
+import com.cst438.domain.AssignmentListDTO.AssignmentDTO;
 import com.cst438.domain.AssignmentGrade;
 import com.cst438.domain.AssignmentGradeRepository;
 import com.cst438.domain.AssignmentRepository;
@@ -43,7 +47,10 @@ public class GradeBookController {
 	@Autowired
 	RegistrationService registrationService;
 	
-	// get assignments for an instructor that need grading
+	// Needed to convert string -> date -> sql date (for setting dueDate)
+	java.util.Date date;
+	
+	/* Get assignments for an instructor that need grading */
 	@GetMapping("/gradebook")
 	public AssignmentListDTO getAssignmentsNeedGrading( ) {
 		
@@ -57,6 +64,7 @@ public class GradeBookController {
 		return result;
 	}
 	
+	/* Get grades for an assignment */
 	@GetMapping("/gradebook/{id}")
 	public GradebookDTO getGradebook(@PathVariable("id") Integer assignmentId  ) {
 		
@@ -89,19 +97,109 @@ public class GradeBookController {
 		return gradebook;
 	}
 	
+	/* Update grade of an assignment */
+	@PutMapping("/gradebook/{id}")
+	@Transactional
+	public void updateGradebook(@RequestBody GradebookDTO gradebook, @PathVariable("id") Integer assignmentId) {
+		
+		String email = "dwisneski@csumb.edu";  // user name (should be instructor's email) 
+		checkAssignment(assignmentId, email);  // check that user name matches instructor email of the course.
+		
+		// for each grade in gradebook, update the assignment grade in database 
+		System.out.printf("%d %s %d\n",  gradebook.assignmentId, gradebook.assignmentName, gradebook.grades.size());
+
+		for (GradebookDTO.Grade g : gradebook.grades) {
+			System.out.printf("%s\n", g.toString());
+			AssignmentGrade ag = assignmentGradeRepository.findById(g.assignmentGradeId).orElse(null);
+
+			if (ag == null) {
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid grade primary key. "+g.assignmentGradeId);
+			}
+			ag.setScore(g.grade);
+			System.out.printf("%s\n", ag.toString());
+			
+			assignmentGradeRepository.save(ag);
+		}
+	}
+	
+	/* Add an assignment (POST with body in AssignmentDTO format)*/
+	@PostMapping("/course/{course_id}/assignment")
+	@Transactional
+	public void addAssignment(@RequestParam String assignmentName, String dueDate, @PathVariable("course_id") Integer courseId) throws ParseException {
+
+		String email = "dwisneski@csumb.edu";  // user name (should be instructor's email) 
+		
+		Course course = courseRepository.findById(courseId).orElse(null); // get the course the assignment is for
+		
+		if (!course.getInstructor().equals(email)) { // Check that the instructor is teaching the course
+			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not Authorized.");
+		}
+		
+		SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd"); // needed for the Date object
+		long time = formatter.parse(dueDate).getTime();
+		java.sql.Date date = new java.sql.Date(time); // convert to the sql date object
+
+		Assignment a = new Assignment();
+		a.setName(assignmentName);
+		a.setDueDate(date);
+		a.setCourse(course);
+		a.setNeedsGrading(1);
+
+		assignmentRepository.save(a);
+	}
+	
+	/* Update the name of an assignment (PUT with body and id parameter) */
+	@PutMapping("/assignment/{assignmentId}")
+	@Transactional
+	public void updateName(@RequestParam String assignmentName, @PathVariable("assignmentId") Integer assignmentId) {
+			
+		String email = "dwisneski@csumb.edu";  // user name (should be instructor's email) 
+		checkAssignment(assignmentId, email);
+		
+		// Find assignment by ID
+		Assignment a = assignmentRepository.findById(assignmentId).orElse(null);
+		if(a == null) {
+			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid id");
+		}
+		a.setName(assignmentName);
+		assignmentRepository.save(a);
+	}
+	
+	/* Delete an assignment only if it is not graded (DELETE with the id parameter) */
+	@DeleteMapping("assignment/{id}")
+	@Transactional
+	public void deleteAssignment(@PathVariable("id") Integer assignmentId) {
+		
+		String email = "dwisneski@csumb.edu";  // user name (should be instructor's email) 
+		
+		Assignment a = assignmentRepository.findById(assignmentId).orElse(null);
+		if(a == null) {
+			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid id");
+		}
+		
+		Assignment assignment = checkAssignment(assignmentId, email);
+		if (assignment.getNeedsGrading() == 1) {
+			assignmentRepository.delete(a);
+		}
+		else {
+			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Assignment(s) Graded");
+		}
+	}
+	
+	/* Submit final grades for the semester */
 	@PostMapping("/course/{course_id}/finalgrades")
 	@Transactional
 	public void calcFinalGrades(@PathVariable int course_id) {
 		System.out.println("Gradebook - calcFinalGrades for course " + course_id);
-		
+				
 		// check that this request is from the course instructor 
 		String email = "dwisneski@csumb.edu";  // user name (should be instructor's email) 
-		
+				
 		Course c = courseRepository.findById(course_id).orElse(null);
 		if (!c.getInstructor().equals(email)) {
-			throw new ResponseStatusException( HttpStatus.UNAUTHORIZED, "Not Authorized. " );
+			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not Authorized. ");
 		}
-		
+				
 		CourseDTOG cdto = new CourseDTOG();
 		cdto.course_id = course_id;
 		cdto.grades = new ArrayList<>();
@@ -120,42 +218,11 @@ public class GradeBookController {
 			cdto.grades.add(gdto);
 			System.out.println("Course="+course_id+" Student="+e.getStudentEmail()+" grade="+gdto.grade);
 		}
-		
+				
 		registrationService.sendFinalGrades(course_id, cdto);
 	}
 	
-	private String letterGrade(double grade) {
-		if (grade >= 90) return "A";
-		if (grade >= 80) return "B";
-		if (grade >= 70) return "C";
-		if (grade >= 60) return "D";
-		return "F";
-	}
-	
-	@PutMapping("/gradebook/{id}")
-	@Transactional
-	public void updateGradebook (@RequestBody GradebookDTO gradebook, @PathVariable("id") Integer assignmentId ) {
-		
-		String email = "dwisneski@csumb.edu";  // user name (should be instructor's email) 
-		checkAssignment(assignmentId, email);  // check that user name matches instructor email of the course.
-		
-		// for each grade in gradebook, update the assignment grade in database 
-		System.out.printf("%d %s %d\n",  gradebook.assignmentId, gradebook.assignmentName, gradebook.grades.size());
-		
-		for (GradebookDTO.Grade g : gradebook.grades) {
-			System.out.printf("%s\n", g.toString());
-			AssignmentGrade ag = assignmentGradeRepository.findById(g.assignmentGradeId).orElse(null);
-			if (ag == null) {
-				throw new ResponseStatusException( HttpStatus.BAD_REQUEST, "Invalid grade primary key. "+g.assignmentGradeId);
-			}
-			ag.setScore(g.grade);
-			System.out.printf("%s\n", ag.toString());
-			
-			assignmentGradeRepository.save(ag);
-		}
-		
-	}
-	
+	// checks user is instructor of course of assignment
 	private Assignment checkAssignment(int assignmentId, String email) {
 		// get assignment 
 		Assignment assignment = assignmentRepository.findById(assignmentId).orElse(null);
@@ -166,8 +233,16 @@ public class GradeBookController {
 		if (!assignment.getCourse().getInstructor().equals(email)) {
 			throw new ResponseStatusException( HttpStatus.UNAUTHORIZED, "Not Authorized. " );
 		}
-		
+			
 		return assignment;
 	}
-
+	
+	// final grade converts percentages to letter grades
+	private String letterGrade(double grade) {
+		if (grade >= 90) return "A";
+		if (grade >= 80) return "B";
+		if (grade >= 70) return "C";
+		if (grade >= 60) return "D";
+		return "F";
+	}
 }
