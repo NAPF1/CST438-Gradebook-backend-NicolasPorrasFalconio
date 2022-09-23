@@ -13,7 +13,22 @@ public class AssignmentListDTO {
 		public String dueDate;
 		public String courseTitle;
 		public int courseId;
-
+		
+		public AssignmentDTO() {
+			super();
+		}
+		
+		public AssignmentDTO(String assignmentName, String dueDate) {
+			this.assignmentName = assignmentName;
+			this.dueDate = dueDate;
+		}
+		
+		public AssignmentDTO(String assignmentName, String dueDate, int courseId) {
+			this.assignmentName = assignmentName;
+			this.dueDate = dueDate;
+			this.courseId = courseId;
+		}
+		
 		public AssignmentDTO(int assignmentId, int courseId, String assignmentName, String dueDate,
 				String courseTitle) {
 			this.assignmentId = assignmentId;
